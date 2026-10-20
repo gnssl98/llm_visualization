@@ -1,0 +1,235 @@
+/* stage — 무대·컨트롤 바. 사양서 §9.
+   색·간격·시간은 tokens.css에서만 온다. 여기에 색 리터럴을 두지 않는다. */
+
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 15px/1.6 -apple-system, BlinkMacSystemFont, 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+}
+.mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+.hidden { display: none !important; }
+
+.shell { max-width: 1180px; margin: 0 auto; padding: 32px 24px 48px; }
+
+.shell__head h1 {
+  margin: 0 0 6px;
+  font-size: 21px; font-weight: 600; letter-spacing: -0.01em;
+}
+.cap { margin: 0; font-size: 13px; color: var(--ink-3); }
+.cap--warn { color: var(--warn); margin-top: 4px; }
+
+/* 무대. 캔버스는 블록이어야 한다 — inline이면 baseline 여백이 생겨
+   ResizeObserver가 잰 높이와 실제 그리는 높이가 어긋난다. */
+/* 마진은 래퍼가 진다 — .stage 자신에 두면 sticky 높이(최대 75vh) + 마진이
+   .stage-wrap의 고정 75vh를 넘어서 살짝 넘친다. */
+.stage-wrap { height: 75vh; margin-top: 18px; }
+.stage {
+  position: relative;
+  /* §9-1: 무대 75vh. §5-4에서 스크롤에 따라 36vh까지 JS가 인라인으로 줄인다. */
+  height: 75vh;
+  width: 100%;
+  border: var(--bd);
+  background: var(--paper);
+  /* 한 손가락 세로 스와이프로 페이지가 스크롤되어야 한다(§5-3 터치 정책).
+     touch-action: none으로 두면 무대 위에서 페이지가 잠긴다. */
+  touch-action: pan-y;
+}
+.stage canvas { display: block; width: 100%; height: 100%; }
+.stage__empty {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  margin: 0; font-size: 13px; color: var(--ink-3);
+}
+
+/* 하단 컨트롤 바 — §9-4. 무대 *안*, 캔버스 위에 뜬다(문서 흐름 아래가 아니다).
+ * 2026-08-27 리뷰 전에는 `.stage-wrap` 바깥의 일반 블록이었다 — 사양서가 명시한
+ * "무대 하단에 떠 있음 + 반투명 배경"과 반대였다. `.stage`가 position:relative라
+ * 이 안에서 absolute + bottom:0이면 그대로 바닥에 붙는다.
+ */
+.bar {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 20px;
+  height: 40px; padding: 0 12px;
+  background: var(--bar-bg);
+  backdrop-filter: blur(var(--s-2));
+  -webkit-backdrop-filter: blur(var(--s-2));
+  border-top: var(--bd);
+  font-size: 13px;
+  z-index: 4;   /* 레일(3)보다 위 — 좁은 무대에서 겹쳐도 컨트롤 바가 눌린다 */
+}
+.bar__group { display: flex; align-items: center; gap: 10px; }
+.bar__note { margin: 0 0 0 auto; color: var(--ink-3); font-size: 12px; }
+
+/* 알약 금지(§15-3) — 사각 버튼 + 활성 밑줄 */
+.bar button {
+  border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  background: none; padding: 4px 2px;
+  font: inherit; color: var(--ink-3); cursor: pointer;
+  transition: color var(--t-2), border-color var(--t-2);
+}
+.bar button:hover { color: var(--ink-2); }
+.bar button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.bar button:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+.bar input[type="range"] { width: 200px; accent-color: var(--signal); }
+.bar output { min-width: 4ch; color: var(--ink-2); }
+.bar label { color: var(--ink-3); }
+
+/* ── §6 DOM 라벨 오버레이 ──────────────────────────────── */
+.labels, .annotations, .leaders {
+  position: absolute; inset: 0;
+  pointer-events: none;   /* §6-1: 컨테이너는 통과, 클릭 대상 있는 개별 요소만 auto */
+  overflow: hidden;
+}
+/* ⚠️ 2026-08-27 리뷰에서 실측으로 잡은 버그: `<svg>`는 대체 요소(replaced element)라
+ * `position:absolute; inset:0`만으로는 컨테이너를 채우지 않는다 — width/height
+ * 속성이 없으면 SVG 고유 기본 크기(300×150)로 접혀 엉뚱한 위치·크기에 놓인다.
+ * 실측: 무대 전체 대신 (327,111)~(627,261)짜리 300×150 상자에 갇혀 있었다.
+ * 그 안에서 계산되는 리더선 좌표는 전부 어긋났고, 이게 "리더선이 안 보인다"의
+ * 실제 원인 중 하나였다(주석 앵커 버그와는 별개로 존재하던 버그). div(`.labels`,
+ * `.annotations`)는 대체 요소가 아니라 이 문제가 없다 — svg만 명시가 필요하다. */
+.leaders { width: 100%; height: 100%; }
+.label {
+  position: absolute; top: 0; left: 0;
+  font: 400 var(--t-num, 11px)/1 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--ink-2);
+  white-space: nowrap;
+  will-change: transform;
+}
+.label--tick { color: var(--ink-3); font-size: 10px; }
+.label--selected { color: var(--ink); font-weight: 600; }
+
+/* 선택 노드 말풍선(§6-3) — 알약 금지, 배경 채움은 이것 하나뿐 */
+.bubble {
+  position: absolute; top: 0; left: 0;
+  min-width: 120px; max-width: 220px;
+  padding: 8px 10px;
+  background: var(--paper, #FCFBF9);
+  border: var(--bd); border-radius: 3px;
+  box-shadow: 0 4px 16px rgba(20,21,26,.12);
+  font-size: 12px; line-height: 1.5; color: var(--ink-2);
+  pointer-events: none;
+  will-change: transform;
+}
+.bubble__label { color: var(--ink-3); font-size: 10px; text-transform: uppercase; letter-spacing: .02em; }
+.bubble__value { color: var(--ink); font: 600 13px/1.3 'JetBrains Mono', monospace; margin: 2px 0; }
+.bubble.hidden { display: none; }
+
+/* 3D 안 주석(§6-4) */
+.annot {
+  position: absolute; top: 0; left: 0;
+  max-width: 220px;
+  font-size: 12px; line-height: 1.45; color: var(--ink-2);
+  pointer-events: none;
+  will-change: transform;
+}
+.annot.hidden { display: none; }
+.annot__leader { fill: none; stroke: var(--ink-4); stroke-width: 1; }
+
+/* ── §5-4 sticky shrink ────────────────────────────────── */
+/* 높이는 JS가 스크롤에 직접 연동해 인라인으로 준다 — 트랜지션을 쓰면 손가락에서 벗어난다.
+ *
+ * ⚠️ **래퍼가 반드시 필요하다.** `.stage`가 문서 흐름 안에 있는 채로 그 높이를
+ * 스크롤에 맞춰 줄이면, 줄어든 만큼 문서 전체 스크롤 가능 높이도 줄어들고,
+ * 그러면 브라우저가 현재 scrollY를 새 최댓값으로 즉시 clamp한다 — clamp된 scrollY로
+ * 또 높이를 다시 계산하고, 다시 clamp되고… **스크롤 위치가 자기 자신을 되먹임으로
+ * 끌어내려 0으로 수렴**했다(실측: `scrollTo(0,320)` 직후엔 320이었다가 50ms 안에 0).
+ * `.stage-wrap`을 최대 높이(75vh)로 고정해 두면 안의 `.stage`가 얼마나 줄든
+ * 문서 스크롤 높이는 변하지 않는다 — 피드백 루프의 경로 자체를 끊는다. */
+
+.stage--sticky {
+  position: sticky;
+  top: 52px;
+  z-index: 5;
+}
+
+/* ── §9-6 아래 밴드 (자리표시자 — 내용은 단계 9) ────────── */
+.band {
+  padding: 28px 0;
+  border-top: var(--bd);
+  font-size: 13px; color: var(--ink-3);
+}
+.band h2 {
+  margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.band--details summary { cursor: pointer; color: var(--ink-2); }
+
+/* ── §9-3 층 레일 ──────────────────────────────────────── */
+.rail {
+  position: absolute; left: 8px; top: 0; width: 104px; height: 100%;
+  pointer-events: none;   /* 컨테이너는 통과, 실제 상호작용 요소만 auto */
+  font: 400 11px/1 'JetBrains Mono', ui-monospace, monospace;
+  z-index: 3;
+}
+.rail__rows {
+  position: absolute; left: 0; width: 100%;
+  /* JS가 이미 L→0 순서로 append한다(가장 위 층부터) — column-reverse를 더하면
+     두 번 뒤집혀 Emb가 위로 온다. 실측 스크린샷에서 실제로 뒤집힌 채 나왔다. */
+  flex-direction: column;
+  pointer-events: auto;
+}
+/* ⚠️ 2026-08-27 리뷰에서 실측으로 잡은 버그: `display:flex`를 `.rail__rows`에 바로 걸면
+ * `[hidden]`의 `display:none`과 명시도가 같고(둘 다 단일 선택자) 이 규칙이 스타일시트에서
+ * 더 나중이라 **`hidden` 속성을 이긴다** — JS가 `rowsEl.hidden = true`로 축 모드로
+ * 전환해도 이전에 그려둔 행(예: 초기 L=0일 때 만들어진 "Emb" 한 줄)이 화면에 남는다.
+ * 32B(L=64) 축 모드 스크린샷에서 본 "Emb 라벨이 축에서 붕 떠 있다"가 실은 축 눈금이
+ * 아니라 이 유령 행이었다. `:not([hidden])`로 명시도를 올려 hidden이 항상 이기게 한다. */
+.rail__rows:not([hidden]) { display: flex; }
+.rail__row {
+  display: flex; align-items: center; gap: 4px;
+  border: 0; background: none; padding: 0 4px;
+  color: var(--ink-3); cursor: pointer; text-align: left;
+  border-radius: 2px;
+}
+.rail__row:hover { background: var(--paper-2); }
+.rail__row--focus { background: var(--ink); color: var(--paper); }
+.rail__name { width: 30px; flex: none; }
+.rail__bar { display: block; height: 4px; background: var(--ink-4); border-radius: 1px; min-width: 1px; }
+.rail__row--focus .rail__bar { background: var(--paper); }
+.rail__diamond { color: var(--signal); flex: none; font-size: 9px; }
+.rail__row--focus .rail__diamond { color: var(--signal); }
+
+.rail__axis-svg { position: absolute; left: 0; top: 0; pointer-events: auto; overflow: visible; }
+.rail__axisline { stroke: var(--line-strong); stroke-width: 1; }
+.rail__axisline--signal { stroke: var(--signal); }
+.rail__tick { stroke: var(--line-strong); stroke-width: 1; }
+.rail__spark { fill: none; stroke: var(--ink-4); stroke-width: 1; }
+.rail__decision-dot { fill: var(--signal); }
+.rail__handle { fill: var(--ink); cursor: grab; }
+.rail__handle:active { cursor: grabbing; }
+
+.rail__axis-labels { position: absolute; left: 0; top: 0; width: 100%; pointer-events: none; }
+.rail__axislabel {
+  position: absolute; right: 18px; transform: translateY(-50%);
+  color: var(--ink-3); font-size: 10px; white-space: nowrap;
+}
+.rail__axislabel--focus { color: var(--ink); font-weight: 600; }
+
+/* ── A-03 포커스 표시 ──────────────────────────────────── */
+.stage canvas:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+
+/* ── A-05 대체 뷰 (표로 보기) ──────────────────────────── */
+.table-view { margin-top: 16px; border-top: var(--bd); padding-top: 12px; }
+.table-view summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+.table-view__body {
+  /* minmax(0, 1fr) — 그냥 1fr이면 그리드 트랙이 내용(줄바꿈 없는 넓은 표)의
+     최소 크기까지 늘어난다("grid blowout"). 59열 표에서 실제로 이렇게 페이지
+     전체가 옆으로 밀렸다(2026-08-27 리뷰) — 안쪽 `.table-view__scroll`의
+     overflow-x:auto는 자기 트랙이 이미 넘쳐 있으면 아무 효과가 없다. */
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px;
+  margin-top: 12px;
+}
+.table-view h3 { font-size: 12px; font-weight: 600; color: var(--ink-3); margin: 0 0 6px; }
+.table-view__scroll { overflow-x: auto; max-height: 320px; overflow-y: auto; border: var(--bd); }
+.table-view table {
+  border-collapse: collapse; font: 11px/1.4 'JetBrains Mono', monospace; white-space: nowrap;
+}
+.table-view th, .table-view td {
+  padding: 3px 6px; border-bottom: 1px solid var(--line-faint, var(--line)); text-align: right;
+}
+.table-view th { position: sticky; top: 0; background: var(--paper); color: var(--ink-3); text-align: center; }
+.table-view td:first-child, .table-view th:first-child { text-align: left; color: var(--ink-3); position: sticky; left: 0; background: var(--paper); }
+.table-view td.decision { color: var(--signal); font-weight: 600; }
+.table-view td.sink { color: var(--warn, var(--ink-3)); }

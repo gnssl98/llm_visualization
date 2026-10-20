@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM 3D 시각화 — 단계 3 씬 골격</title>
+<link rel="stylesheet" href="./css/tokens.css">
+<link rel="stylesheet" href="./css/stage.css">
+
+<!--
+  three는 **단계 1에서 검증한 r185로 고정**한다. latest·범위 지정 금지 —
+  발표 당일 CDN이 올린 새 버전에 깨지면 복구할 시간이 없다.
+
+  ⚠️ 오프라인 함정 2개(§4-1, 실측 확인):
+    ① r165+ 부터 three.module.js가 ./three.core.js를 상대 경로로 import한다.
+       그 파일을 빠뜨리면 CDN에서는 멀쩡하고 오프라인에서만 죽는다.
+    ② addons끼리 `three/addons/...` bare specifier로 서로를 참조한다.
+       `three` 매핑만 넣고 `three/addons/`를 빼면 역시 오프라인에서만 터진다.
+  둘 다 "파일을 받아뒀다"로는 안 잡힌다. 실제로 끊고 띄우는 것이 유일한 확인이다.
+
+  발표장에서는 아래 로컬 경로를 그대로 쓴다(기본값). 네트워크가 필요 없다.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./assets/vendor/three/build/three.module.js",
+    "three/addons/": "./assets/vendor/three/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<main class="shell">
+  <header class="shell__head">
+    <h1>층을 따라 의미가 어떻게 움직이는가</h1>
+    <p class="cap" id="caption">분석 결과를 기다리는 중입니다.</p>
+    <p class="cap cap--warn hidden" id="axisWarn"></p>
+    <p class="cap cap--warn hidden" id="webglWarn"></p>
+  </header>
+
+  <div class="stage-wrap">
+    <div class="stage" id="stage">
+      <canvas id="scene" tabindex="0" role="img" aria-label="분석 결과를 기다리는 중입니다."></canvas>
+      <div id="rail"></div>
+      <div class="labels" id="labels" aria-hidden="true"></div>
+      <svg class="leaders" id="leaders" aria-hidden="true"></svg>
+      <div class="annotations" id="annotations" aria-hidden="true"></div>
+      <div class="bubble hidden" id="bubble" role="status" aria-live="polite"></div>
+      <p class="stage__empty" id="empty">데이터가 없습니다.</p>
+
+      <!-- §9-4 하단 컨트롤 바. 2026-08-27 디자인 리뷰: 캔버스 *아래*(문서 흐름)에
+           있던 것을 무대 *위*로 옮겼다 — 사양서가 애초에 "무대 하단에 떠 있음
+           (배경 반투명+blur)"이라고 못박은 자리다. `.stage`의 자식이라 sticky
+           축소(§5-4)로 무대 높이가 JS에 의해 줄어들 때도 별도 동기화 코드 없이
+           바닥에 그대로 붙어 따라간다. -->
+      <div class="bar">
+        <div class="bar__group" role="group" aria-label="시점">
+          <button type="button" data-preset="front">정면</button>
+          <button type="button" data-preset="side">측면</button>
+          <button type="button" data-preset="top">조감</button>
+          <button type="button" data-preset="threeQ" aria-pressed="true">3/4</button>
+        </div>
+        <!-- 초점 층·선택 토큰 슬라이더는 제거했다(사용자 승인) — 레일(§9-3, 왼쪽)이
+             층을, 3D 피킹+키보드(§7-2·§7-1)가 토큰을 이미 전부 담당해 중복이었다. -->
+        <p class="bar__note mono" id="stat"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- A-05: 대체 뷰. 3D 없이도 같은 사실(층별 예측·attention)에 도달할 수 있어야 한다. -->
+  <details class="table-view" id="tableView">
+    <summary>표로 보기</summary>
+    <div class="table-view__body">
+      <div>
+        <h3>층 × 위치 — 그 자리에서 이 층이 예측한 토큰</h3>
+        <div class="table-view__scroll"><table id="gridTable"></table></div>
+      </div>
+      <div>
+        <h3>초점 층의 attention — 무엇이 무엇을 보는가</h3>
+        <div class="table-view__scroll"><table id="attnTable"></table></div>
+      </div>
+    </div>
+  </details>
+</main>
+
+<!-- §9-6 아래 밴드. 지금은 §7-3 상태 연동(제목만)을 시험하는 자리표시자다 —
+     내부 콘텐츠(히트맵·logit lens·진단 등)는 2D 패널을 그대로 포팅하는 별도 작업이라
+     이 단계 범위 밖이다. 존재 이유는 두 가지: ① 밴드 제목이 무대 상태를 따라 바뀌는지
+     확인 ② sticky shrink(§5-4)가 실제로 스크롤할 내용이 있어야 시험된다. -->
+<div class="shell" style="max-width:1180px;margin:0 auto;padding:0 24px 80px;">
+  <section class="band" id="band1"><h2 id="band1Title">—</h2><p>밴드 1 콘텐츠는 단계 9에서.</p></section>
+  <section class="band" id="band2"><h2 id="band2Title">—</h2><p>밴드 2 콘텐츠는 단계 9에서.</p></section>
+  <section class="band"><h2>진단</h2><p>밴드 3 콘텐츠는 단계 9에서.</p></section>
+  <section class="band band--details"><details><summary>이 화면 읽는 법</summary>
+    <p>앞뒤 축은 수백 개 숫자를 한 줄로 눌러 담은 것이라 전체의 일부만 담습니다.</p>
+  </details></section>
+</div>
+
+<script src="./js/strings.js"></script>
+<script src="./js/i18n.js"></script>
+<script type="module" src="./js/3d/boot.js"></script>
+</body>
+</html>
