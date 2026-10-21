@@ -121,6 +121,8 @@ docs/
   03_3D_구현_사양서.md   좌표계·시각 인코딩·인터랙션 규칙 전문
   screenshots/
 
+LICENSE             MIT. 번들한 three.js·픽스처 출처도 여기 적어뒀다
+
 tools/
   test_coords.mjs        좌표계 검증 (브라우저 없이 Node로)
   test_edges.mjs         엣지 굵기 양자화 검증
@@ -162,6 +164,8 @@ three.js를 import하지 않는 순수 함수로 떼어둔 덕분에 브라우�
 ---
 
 ## 출처와 라이선스
+
+MIT. 자세한 내용과 third-party 출처는 [LICENSE](LICENSE)에 있습니다.
 
 - [three.js](https://threejs.org) r185 (MIT) — `web/assets/vendor/`에 번들로 포함
 - 픽스처는 [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct) (Apache 2.0) 출력에서 파생
